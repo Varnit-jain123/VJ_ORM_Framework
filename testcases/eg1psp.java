@@ -10,17 +10,17 @@ public class eg1psp {
     public static void main(String[] args) {
         String configPath = "conf.json";
         try {
-            // 1. Read config
+            // Read config
             DBConfig config = ConfigReader.readConfig(configPath);
 
-            // 2. Establish connection
+            // Establish connection
             Connection connection = ConnectionManager.getConnection(config);
 
-            // 3. Extract and print metadata
+            // Extract and print metadata
             MetadataExtractor extractor = new MetadataExtractor(connection);
             extractor.extractAndPrint();
 
-            // 4. Close connection
+            // Close connection
             ConnectionManager.closeConnection();
 
         } catch (Exception e) {

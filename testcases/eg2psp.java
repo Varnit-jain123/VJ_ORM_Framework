@@ -11,17 +11,17 @@ public class eg2psp {
     public static void main(String[] args) {
         String configPath = "conf.json";
         try {
-            // 1. Read config
+            // Read config
             DBConfig config = ConfigReader.readConfig(configPath);
 
-            // 2. Establish connection
+            // Establish connection
             Connection connection = ConnectionManager.getConnection(config);
 
-            // 3. Generate entities
+            // Generate entities
             EntityGenerator generator = new EntityGenerator(connection);
             generator.generateEntities();
 
-            // 4. Close connection
+            // Close connection
             ConnectionManager.closeConnection();
 
             System.out.println("Phase 2 completion: Entity classes generated successfully.");

@@ -43,21 +43,37 @@ public class DataManager {
             if (connection != null && !connection.isClosed()) {
                 connection.commit();
                 ConnectionManager.closeConnection();
+                connection = null; // Reset for next session
             }
         } catch (Exception e) {
             throw new DataException("Failed to end transaction", e);
         }
     }
 
-    public int save(Object obj) throws DataException {
-        Class<?> clazz = obj.getClass();
-        
-        // 1. Get Table Name
+    private String getTableName(Class<?> clazz) throws DataException {
         Table tableAnnot = clazz.getAnnotation(Table.class);
         if (tableAnnot == null) throw new DataException("Class " + clazz.getSimpleName() + " is not annotated with @Table");
-        String tableName = tableAnnot.name();
+        return tableAnnot.name();
+    }
 
-        // 2. Identify Fields (Columns) to insert
+    private void setParameter(PreparedStatement ps, int index, Object val) throws SQLException {
+        if (val instanceof java.sql.Date) {
+            ps.setDate(index, (java.sql.Date) val);
+        } else if (val instanceof java.util.Date) {
+            ps.setDate(index, new java.sql.Date(((java.util.Date) val).getTime()));
+        } else if (val instanceof String) {
+            ps.setString(index, (String) val);
+        } else if (val instanceof Integer) {
+            ps.setInt(index, (Integer) val);
+        } else {
+            ps.setObject(index, val);
+        }
+    }
+
+    public int save(Object obj) throws DataException {
+        Class<?> clazz = obj.getClass();
+        String tableName = getTableName(clazz);
+
         List<String> columnNames = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         Object manualPkValue = null;
@@ -66,7 +82,6 @@ public class DataManager {
             Column colAnnot = field.getAnnotation(Column.class);
             if (colAnnot == null) continue;
 
-            // Capture manual PK value just in case
             if (field.isAnnotationPresent(PrimaryKey.class) && !field.isAnnotationPresent(AutoIncrement.class)) {
                 try {
                     field.setAccessible(true);
@@ -74,11 +89,9 @@ public class DataManager {
                 } catch (Exception e) {}
             }
 
-            // Skip AutoIncrement fields from INSERT
             if (field.isAnnotationPresent(AutoIncrement.class)) continue;
 
             columnNames.add(colAnnot.name());
-            
             try {
                 field.setAccessible(true);
                 values.add(field.get(obj));
@@ -87,10 +100,8 @@ public class DataManager {
             }
         }
 
-        // 3. Build SQL
         StringBuilder sql = new StringBuilder("INSERT INTO ").append(tableName).append(" (");
         StringBuilder placeholders = new StringBuilder(" VALUES (");
-        
         for (int i = 0; i < columnNames.size(); i++) {
             sql.append(columnNames.get(i));
             placeholders.append("?");
@@ -101,26 +112,10 @@ public class DataManager {
         }
         sql.append(")").append(placeholders).append(")");
 
-        // 4. Execute
         try (PreparedStatement ps = connection.prepareStatement(sql.toString(), Statement.RETURN_GENERATED_KEYS)) {
             for (int i = 0; i < values.size(); i++) {
-                Object val = values.get(i);
-                int paramIndex = i + 1;
-
-                // Enhanced Type Handling
-                if (val instanceof java.sql.Date) {
-                    ps.setDate(paramIndex, (java.sql.Date) val);
-                } else if (val instanceof java.util.Date) {
-                    ps.setDate(paramIndex, new java.sql.Date(((java.util.Date) val).getTime()));
-                } else if (val instanceof String) {
-                    ps.setString(paramIndex, (String) val);
-                } else if (val instanceof Integer) {
-                    ps.setInt(paramIndex, (Integer) val);
-                } else {
-                    ps.setObject(paramIndex, val);
-                }
+                setParameter(ps, i + 1, values.get(i));
             }
-
             int affectedRows = ps.executeUpdate();
             if (affectedRows == 0) throw new DataException("Save failed, no rows affected.");
 
@@ -130,11 +125,103 @@ public class DataManager {
                 } else if (manualPkValue instanceof Integer) {
                     return (Integer) manualPkValue;
                 } else {
-                    throw new DataException("Save failed, no ID obtained (Generated or Manual).");
+                    throw new DataException("Save failed, no ID obtained.");
                 }
             }
         } catch (SQLException e) {
             throw new DataException("SQL Error during save: " + e.getMessage(), e);
+        }
+    }
+
+    public void update(Object obj) throws DataException {
+        Class<?> clazz = obj.getClass();
+        String tableName = getTableName(clazz);
+
+        Field pkField = null;
+        String pkColumnName = null;
+        List<String> setColumns = new ArrayList<>();
+        List<Object> setValues = new ArrayList<>();
+
+        for (Field field : clazz.getDeclaredFields()) {
+            Column colAnnot = field.getAnnotation(Column.class);
+            if (colAnnot == null) continue;
+
+            if (field.isAnnotationPresent(PrimaryKey.class)) {
+                pkField = field;
+                pkColumnName = colAnnot.name();
+            } else {
+                setColumns.add(colAnnot.name());
+                try {
+                    field.setAccessible(true);
+                    setValues.add(field.get(obj));
+                } catch (IllegalAccessException e) {
+                    throw new DataException("Failed to access field " + field.getName(), e);
+                }
+            }
+        }
+
+        if (pkField == null) throw new DataException("Class " + clazz.getSimpleName() + " has no @PrimaryKey field.");
+
+        Object pkValue;
+        try {
+            pkField.setAccessible(true);
+            pkValue = pkField.get(obj);
+        } catch (IllegalAccessException e) {
+            throw new DataException("Failed to access primary key value", e);
+        }
+
+        if (pkValue == null) throw new DataException("Update failed: Primary key value is null.");
+
+        StringBuilder sql = new StringBuilder("UPDATE ").append(tableName).append(" SET ");
+        for (int i = 0; i < setColumns.size(); i++) {
+            sql.append(setColumns.get(i)).append("=?");
+            if (i < setColumns.size() - 1) sql.append(", ");
+        }
+        sql.append(" WHERE ").append(pkColumnName).append("=?");
+
+        try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
+            int i = 0;
+            for (; i < setValues.size(); i++) {
+                setParameter(ps, i + 1, setValues.get(i));
+            }
+            setParameter(ps, i + 1, pkValue);
+
+            int affectedRows = ps.executeUpdate();
+            if (affectedRows == 0) throw new DataException("Update failed: Record not found.");
+        } catch (SQLException e) {
+            throw new DataException("SQL Error during update: " + e.getMessage(), e);
+        }
+    }
+
+    public void delete(Class<?> clazz, Object primaryKey) throws DataException {
+        String tableName = getTableName(clazz);
+        String pkColumnName = null;
+
+        for (Field field : clazz.getDeclaredFields()) {
+            if (field.isAnnotationPresent(PrimaryKey.class)) {
+                Column colAnnot = field.getAnnotation(Column.class);
+                if (colAnnot != null) {
+                    pkColumnName = colAnnot.name();
+                    break;
+                }
+            }
+        }
+
+        if (pkColumnName == null) throw new DataException("Class " + clazz.getSimpleName() + " has no @PrimaryKey field.");
+        if (primaryKey == null) throw new DataException("Delete failed: Primary key value is null.");
+
+        String sql = "DELETE FROM " + tableName + " WHERE " + pkColumnName + "=?";
+
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            setParameter(ps, 1, primaryKey);
+            int affectedRows = ps.executeUpdate();
+            if (affectedRows == 0) throw new DataException("Delete failed: Record not found.");
+        } catch (SQLException e) {
+            // Awareness of Foreign Key: wrap clear error message
+            if (e.getErrorCode() == 1451) {
+                throw new DataException("Delete failed: Record is referenced by other items (Foreign Key constraint).", e);
+            }
+            throw new DataException("SQL Error during delete: " + e.getMessage(), e);
         }
     }
 }

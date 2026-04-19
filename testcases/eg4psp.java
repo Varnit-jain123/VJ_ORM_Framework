@@ -11,13 +11,13 @@ public class eg4psp {
 
         try {
             dm.begin();
-            // // 1. Create a Course to ensure we have a valid Foreign Key
+            // Create a Course to ensure we have a valid Foreign Key
             // Course c = new Course();
             // c.setTitle("Python Development");
             // int courseId = dm.save(c);
             // System.out.println("Course added with ID: " + courseId);
 
-            // 2. Create a Student linked to that Course
+            // Create a Student linked to that Course
             Student s = new Student();
             s.rollNumber = 103; // Manual PK as per setup.sql
             s.firstName = "Rahul";
