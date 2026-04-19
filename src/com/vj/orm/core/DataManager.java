@@ -11,6 +11,7 @@ public class DataManager {
     private static DataManager instance = null;
     private DBConfig config;
     private Connection connection;
+    private final Map<String, Boolean> viewCache = new HashMap<>();
 
     private DataManager() {
         try {
@@ -44,9 +45,22 @@ public class DataManager {
                 connection.commit();
                 ConnectionManager.closeConnection();
                 connection = null; // Reset for next session
+                viewCache.clear(); // Clear cache on end
             }
         } catch (Exception e) {
             throw new DataException("Failed to end transaction", e);
+        }
+    }
+
+    private boolean isView(String tableName) throws DataException {
+        if (viewCache.containsKey(tableName)) return viewCache.get(tableName);
+        
+        try (ResultSet rs = connection.getMetaData().getTables(null, null, tableName, new String[]{"VIEW"})) {
+            boolean isView = rs.next();
+            viewCache.put(tableName, isView);
+            return isView;
+        } catch (SQLException e) {
+            throw new DataException("Metadata error checking view status for " + tableName, e);
         }
     }
 
@@ -107,6 +121,10 @@ public class DataManager {
     public int save(Object obj) throws DataException {
         Class<?> clazz = obj.getClass();
         String tableName = getTableName(clazz);
+        
+        if (isView(tableName)) {
+            throw new DataException("Operation not allowed on database view: " + tableName);
+        }
 
         List<String> columnNames = new ArrayList<>();
         List<Object> values = new ArrayList<>();
@@ -171,6 +189,10 @@ public class DataManager {
         Class<?> clazz = obj.getClass();
         String tableName = getTableName(clazz);
 
+        if (isView(tableName)) {
+            throw new DataException("Operation not allowed on database view: " + tableName);
+        }
+
         Field pkField = null;
         String pkColumnName = null;
         List<String> setColumns = new ArrayList<>();
@@ -229,6 +251,11 @@ public class DataManager {
 
     public void delete(Class<?> clazz, Object primaryKey) throws DataException {
         String tableName = getTableName(clazz);
+
+        if (isView(tableName)) {
+            throw new DataException("Operation not allowed on database view: " + tableName);
+        }
+
         String pkColumnName = null;
 
         for (Field field : clazz.getDeclaredFields()) {
