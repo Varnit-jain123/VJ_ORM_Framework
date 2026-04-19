@@ -50,13 +50,19 @@ public class DataManager {
         }
     }
 
-    private String getTableName(Class<?> clazz) throws DataException {
+    // --- Framework Internal Helpers ---
+
+    protected Connection getConnection() {
+        return connection;
+    }
+
+    protected String getTableName(Class<?> clazz) throws DataException {
         Table tableAnnot = clazz.getAnnotation(Table.class);
         if (tableAnnot == null) throw new DataException("Class " + clazz.getSimpleName() + " is not annotated with @Table");
         return tableAnnot.name();
     }
 
-    private void setParameter(PreparedStatement ps, int index, Object val) throws SQLException {
+    protected void setParameter(PreparedStatement ps, int index, Object val) throws SQLException {
         if (val instanceof java.sql.Date) {
             ps.setDate(index, (java.sql.Date) val);
         } else if (val instanceof java.util.Date) {
@@ -69,6 +75,34 @@ public class DataManager {
             ps.setObject(index, val);
         }
     }
+
+    protected <T> T mapRow(ResultSet rs, Class<T> clazz) throws Exception {
+        T obj = clazz.getDeclaredConstructor().newInstance();
+        for (Field field : clazz.getDeclaredFields()) {
+            Column colAnnot = field.getAnnotation(Column.class);
+            if (colAnnot == null) continue;
+
+            String columnName = colAnnot.name();
+            Object value = rs.getObject(columnName);
+
+            if (value != null) {
+                field.setAccessible(true);
+                Class<?> type = field.getType();
+                if (type == int.class || type == Integer.class) {
+                    field.set(obj, rs.getInt(columnName));
+                } else if (type == String.class) {
+                    field.set(obj, rs.getString(columnName));
+                } else if (type == java.sql.Date.class) {
+                    field.set(obj, rs.getDate(columnName));
+                } else {
+                    field.set(obj, value);
+                }
+            }
+        }
+        return obj;
+    }
+
+    // --- CRUD Operations ---
 
     public int save(Object obj) throws DataException {
         Class<?> clazz = obj.getClass();
@@ -217,11 +251,14 @@ public class DataManager {
             int affectedRows = ps.executeUpdate();
             if (affectedRows == 0) throw new DataException("Delete failed: Record not found.");
         } catch (SQLException e) {
-            // Awareness of Foreign Key: wrap clear error message
             if (e.getErrorCode() == 1451) {
                 throw new DataException("Delete failed: Record is referenced by other items (Foreign Key constraint).", e);
             }
             throw new DataException("SQL Error during delete: " + e.getMessage(), e);
         }
+    }
+
+    public <T> QueryBuilder<T> query(Class<T> clazz) throws DataException {
+        return new QueryBuilder<>(this, clazz);
     }
 }
