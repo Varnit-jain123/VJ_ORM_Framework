@@ -53,6 +53,19 @@ public class QueryBuilder<T> {
     }
 
     public List<T> list() throws DataException {
+        // Cache Hit Check (Only for Select All queries for now)
+        if (whereClause.length() == 0 && dm.isCacheable(clazz)) {
+            List<Object> cached = dm.getCachedList(clazz);
+            if (cached != null) {
+                System.out.println("ORM: Cache Hit for " + clazz.getSimpleName());
+                List<T> results = new ArrayList<>();
+                for (Object o : cached) {
+                    results.add(dm.cloneObject((T) o));
+                }
+                return results;
+            }
+        }
+
         String tableName = dm.getTableName(clazz);
         String sql = "SELECT * FROM " + tableName + whereClause.toString();
         List<T> results = new ArrayList<>();

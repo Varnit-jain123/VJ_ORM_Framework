@@ -3,6 +3,7 @@ package DTO_files;
 import com.vj.orm.annotation.*;
 
 @Table(name="course")
+@Cacheable
 public class Course {
     @PrimaryKey
     @AutoIncrement

@@ -1,0 +1,14 @@
+{
+  "jdbc": {
+    "url": "jdbc:mysql://localhost:3306/vjschool",
+    "username": "varnit",
+    "password": "varnit",
+    "driver": "com.mysql.cj.jdbc.Driver"
+  },
+  "generator": {
+    "packageName": "bobby_project",
+    "outputJar": "bobby-orm.jar",
+    "enableCache": true,
+    "scanViews": true
+  }
+}

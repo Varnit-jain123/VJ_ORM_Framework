@@ -3,6 +3,7 @@ package com.vj.orm.core;
 import com.vj.orm.config.*;
 import com.vj.orm.annotation.*;
 import com.vj.orm.exception.DataException;
+import java.io.File;
 import java.lang.reflect.Field;
 import java.sql.*;
 import java.util.*;
@@ -12,6 +13,9 @@ public class DataManager {
     private DBConfig config;
     private Connection connection;
     private final Map<String, Boolean> viewCache = new HashMap<>();
+    
+    // Phase 7 Cache
+    private static final Map<Class<?>, List<Object>> fullCache = new HashMap<>();
 
     private DataManager() {
         try {
@@ -45,22 +49,65 @@ public class DataManager {
                 connection.commit();
                 ConnectionManager.closeConnection();
                 connection = null; // Reset for next session
-                viewCache.clear(); // Clear cache on end
+                viewCache.clear(); 
             }
         } catch (Exception e) {
             throw new DataException("Failed to end transaction", e);
         }
     }
 
-    private boolean isView(String tableName) throws DataException {
-        if (viewCache.containsKey(tableName)) return viewCache.get(tableName);
-        
-        try (ResultSet rs = connection.getMetaData().getTables(null, null, tableName, new String[]{"VIEW"})) {
-            boolean isView = rs.next();
-            viewCache.put(tableName, isView);
-            return isView;
-        } catch (SQLException e) {
-            throw new DataException("Metadata error checking view status for " + tableName, e);
+    // --- Phase 7 Initialization & Cache Management ---
+
+    public static void init() throws DataException {
+        System.out.println("ORM Initializing Cache...");
+        DataManager dm = getDataManager();
+        try {
+            dm.begin();
+            
+            // Logic to scan DTO_files package
+            String path = "classes/DTO_files";
+            File dir = new File(path);
+            if (dir.exists() && dir.isDirectory()) {
+                for (File file : dir.listFiles()) {
+                    if (file.getName().endsWith(".class")) {
+                        String className = "DTO_files." + file.getName().replace(".class", "");
+                        Class<?> clazz = Class.forName(className);
+                        if (clazz.isAnnotationPresent(Cacheable.class)) {
+                            System.out.println("Caching: " + clazz.getSimpleName());
+                            List<?> results = dm.query(clazz).list();
+                            fullCache.put(clazz, new ArrayList<>(results));
+                        }
+                    }
+                }
+            }
+            
+            dm.end();
+            System.out.println("ORM Cache Initialized.");
+        } catch (Exception e) {
+            throw new DataException("Cache initialization failed", e);
+        }
+    }
+
+    protected boolean isCacheable(Class<?> clazz) {
+        return clazz.isAnnotationPresent(Cacheable.class);
+    }
+
+    protected List<Object> getCachedList(Class<?> clazz) {
+        return fullCache.get(clazz);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected <T> T cloneObject(T obj) throws DataException {
+        try {
+            Class<?> clazz = obj.getClass();
+            T clone = (T) clazz.getDeclaredConstructor().newInstance();
+            for (Field field : clazz.getDeclaredFields()) {
+                field.setAccessible(true);
+                field.set(clone, field.get(obj));
+            }
+            return clone;
+        } catch (Exception e) {
+            throw new DataException("Cloning failed for " + obj.getClass().getSimpleName(), e);
         }
     }
 
@@ -116,6 +163,18 @@ public class DataManager {
         return obj;
     }
 
+    private boolean isView(String tableName) throws DataException {
+        if (viewCache.containsKey(tableName)) return viewCache.get(tableName);
+        
+        try (ResultSet rs = connection.getMetaData().getTables(null, null, tableName, new String[]{"VIEW"})) {
+            boolean isView = rs.next();
+            viewCache.put(tableName, isView);
+            return isView;
+        } catch (SQLException e) {
+            throw new DataException("Metadata error checking view status for " + tableName, e);
+        }
+    }
+
     // --- CRUD Operations ---
 
     public int save(Object obj) throws DataException {
@@ -129,16 +188,20 @@ public class DataManager {
         List<String> columnNames = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         Object manualPkValue = null;
+        Field pkField = null;
 
         for (Field field : clazz.getDeclaredFields()) {
             Column colAnnot = field.getAnnotation(Column.class);
             if (colAnnot == null) continue;
 
-            if (field.isAnnotationPresent(PrimaryKey.class) && !field.isAnnotationPresent(AutoIncrement.class)) {
-                try {
-                    field.setAccessible(true);
-                    manualPkValue = field.get(obj);
-                } catch (Exception e) {}
+            if (field.isAnnotationPresent(PrimaryKey.class)) {
+                pkField = field;
+                if (!field.isAnnotationPresent(AutoIncrement.class)) {
+                    try {
+                        field.setAccessible(true);
+                        manualPkValue = field.get(obj);
+                    } catch (Exception e) {}
+                }
             }
 
             if (field.isAnnotationPresent(AutoIncrement.class)) continue;
@@ -171,15 +234,30 @@ public class DataManager {
             int affectedRows = ps.executeUpdate();
             if (affectedRows == 0) throw new DataException("Save failed, no rows affected.");
 
+            int generatedId = -1;
             try (ResultSet generatedKeys = ps.getGeneratedKeys()) {
                 if (generatedKeys.next()) {
-                    return generatedKeys.getInt(1);
+                    generatedId = generatedKeys.getInt(1);
                 } else if (manualPkValue instanceof Integer) {
-                    return (Integer) manualPkValue;
+                    generatedId = (Integer) manualPkValue;
                 } else {
                     throw new DataException("Save failed, no ID obtained.");
                 }
             }
+            
+            // Sync with Cache
+            if (isCacheable(clazz)) {
+                if (pkField != null) {
+                    try {
+                        pkField.setAccessible(true);
+                        pkField.set(obj, generatedId);
+                    } catch (Exception e) {}
+                }
+                List<Object> list = fullCache.get(clazz);
+                if (list != null) list.add(cloneObject(obj));
+            }
+            
+            return generatedId;
         } catch (SQLException e) {
             throw new DataException("SQL Error during save: " + e.getMessage(), e);
         }
@@ -244,8 +322,23 @@ public class DataManager {
 
             int affectedRows = ps.executeUpdate();
             if (affectedRows == 0) throw new DataException("Update failed: Record not found.");
-        } catch (SQLException e) {
-            throw new DataException("SQL Error during update: " + e.getMessage(), e);
+            
+            // Sync Cache
+            if (isCacheable(clazz)) {
+                List<Object> list = fullCache.get(clazz);
+                if (list != null) {
+                    for (int j = 0; j < list.size(); j++) {
+                        Object cachedObj = list.get(j);
+                        pkField.setAccessible(true);
+                        if (pkValue.equals(pkField.get(cachedObj))) {
+                            list.set(j, cloneObject(obj));
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new DataException("Error during update: " + e.getMessage(), e);
         }
     }
 
@@ -257,9 +350,11 @@ public class DataManager {
         }
 
         String pkColumnName = null;
+        Field pkField = null;
 
         for (Field field : clazz.getDeclaredFields()) {
             if (field.isAnnotationPresent(PrimaryKey.class)) {
+                pkField = field;
                 Column colAnnot = field.getAnnotation(Column.class);
                 if (colAnnot != null) {
                     pkColumnName = colAnnot.name();
@@ -277,11 +372,26 @@ public class DataManager {
             setParameter(ps, 1, primaryKey);
             int affectedRows = ps.executeUpdate();
             if (affectedRows == 0) throw new DataException("Delete failed: Record not found.");
-        } catch (SQLException e) {
-            if (e.getErrorCode() == 1451) {
+            
+            // Sync Cache
+            if (isCacheable(clazz)) {
+                List<Object> list = fullCache.get(clazz);
+                if (list != null) {
+                    for (int j = 0; j < list.size(); j++) {
+                        Object cachedObj = list.get(j);
+                        pkField.setAccessible(true);
+                        if (primaryKey.equals(pkField.get(cachedObj))) {
+                            list.remove(j);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            if (e instanceof SQLException && ((SQLException)e).getErrorCode() == 1451) {
                 throw new DataException("Delete failed: Record is referenced by other items (Foreign Key constraint).", e);
             }
-            throw new DataException("SQL Error during delete: " + e.getMessage(), e);
+            throw new DataException("Error during delete: " + e.getMessage(), e);
         }
     }
 
