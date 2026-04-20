@@ -5,6 +5,23 @@ This tool is a dedicated utility for the **VJ ORM Framework**. It automatically 
 ---
 
 ##  Folder Structure
+
+```text
+VJ_ORM_Tool/
+├── src/
+│   └── com/vj/orm/tool/    (Tool Source Code)
+├── lib/                    (Tool Dependencies)
+├── classes/                (Compiled Bytecode)
+├── generated_project/      (Automation Output)
+│   ├── src/                (Generated POJOs)
+│   ├── dist/               (Final JAR & PDF)
+│   └── config/             (Runtime Config)
+├── build_tool.bat
+├── run_tool.bat
+├── tool_config.json
+└── README.md
+```
+
 - **`src/`**: Source code for the `VJORMTool`.
 - **`lib/`**: All dependencies needed for generation (iText 7, Gson, MySQL).
 - **`generated_project/`**: This directory is created when you run the tool. It contains the output (JAR and PDF).

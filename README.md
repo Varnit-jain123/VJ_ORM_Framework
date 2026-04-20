@@ -16,6 +16,26 @@
 
 ##  Project Structure
 
+```text
+VJ_orm_rock/
+├── src/
+│   └── com/vj/orm/
+│       ├── annotation/     (ORM Annotations)
+│       ├── config/         (Configuration Logic)
+│       ├── core/           (ORM Engine)
+│       └── exception/      (Error Handling)
+├── lib/
+│   ├── itext7/             (PDF Libraries)
+│   ├── gson-2.13.1.jar
+│   ├── mysql.jar
+│   └── vj-orm-core.jar     (Bundled Framework)
+├── testcases/              (Feature Demos)
+├── classes/                (Compiled Bytecode)
+├── VJ_ORM_Tool/            (Automation Toolset)
+├── conf.json               (DB Configuration)
+└── README.md
+```
+
 The project is organized into two primary components: the core framework engine and the automation toolset.
 
 ### Core Framework Packages
