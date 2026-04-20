@@ -220,4 +220,4 @@ java -cp "classes;lib/*" testcases.eg10psp
 ---
 
 
-*Built By Varnit Jain*
+*Built by Varnit Jain*
