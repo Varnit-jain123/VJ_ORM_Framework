@@ -219,5 +219,5 @@ java -cp "classes;lib/*" testcases.eg10psp
 
 ---
 
-## 🛡 License
-Custom framework developed for educational and professional database automation.
+
+Varnit Jain
